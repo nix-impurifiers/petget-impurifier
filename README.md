@@ -69,3 +69,22 @@ metadata, upgrade/removal behavior and the Nix-backed adapter. It does not claim
 Puppy's layered save-file, AUFS, overlay boot or desktop integration coverage.
 
 Run `nix flake check -L` for native VM checks and `nix fmt` for formatting.
+
+## Native payloads and bundled clients
+
+`makeNativePet { name; version; payload; dependencies?; ... }` emits a native
+PET from a producer-prepared filesystem tree without implicit engine scripts
+or Nix dependencies. Native PETget owns installation, replacement and removal.
+The producer supplies a runnable target layout; binaries are not relocated.
+The VM installs and upgrades native files through actual PETget before installing
+the engine, executes the installed static payload in an isolated root without
+`/nix`, then checks native removal. The package-manager fixture itself uses the
+NixOS host tools; this does not claim a full Puppy boot without Nix.
+
+`makeRuntimePet` optionally accepts `bundledNixStore` and `bundledNixNotices`
+for a static ELF client and upstream notices. Bundling omits the default native
+Nix dependency; Python remains required. Compatible external clients take
+precedence, explicit `IMPURIFIER_NIX_STORE` disables fallback, and failed mutations
+are never retried through another client. A bundled-client VM repeats the original
+PETget lifecycle suite with an incompatible external candidate. Nix provisioning
+remains deferred.

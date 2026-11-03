@@ -73,23 +73,22 @@ let
   phase = pkgs.writeText "pet-phase" "#!/bin/sh\nexec /usr/sbin/petget-impurifier-activate\n";
   makeRuntimePet =
     {
-      nixDependency ? "nix",
+      bundledNixStore ? null,
+      bundledNixNotices ? [ ],
+      nixDependency ? (if bundledNixStore == null then "nix" else null),
       pythonDependency ? "python3",
       version ? core.runtimeVersion,
     }:
     buildPet {
       name = "petget-impurifier";
       inherit version;
-      dependencies = [
-        nixDependency
-        pythonDependency
-      ];
+      dependencies = lib.optional (nixDependency != null) nixDependency ++ [ pythonDependency ];
       scripts = {
         pinstall = phase;
         puninstall = phase;
       };
       payload = pkgs.runCommand "petget-runtime" { } ''
-        cp -r ${core.makeRuntimeTree { }} $out
+        cp -r ${core.makeRuntimeTree { inherit bundledNixStore bundledNixNotices; }} $out
         chmod -R u+w $out
         install -Dm755 ${../src/activate.py} $out/usr/sbin/petget-impurifier-activate
         install -Dm755 ${../src/adapter.py} $out/usr/sbin/petget-impurifier
@@ -139,6 +138,7 @@ in
     net = makePet (args // { offline = false; });
     offline = makePet (args // { offline = true; });
   };
+  makeNativePet = args: buildPet args;
   runtimePet = makeRuntimePet { };
   inherit (core) unit;
 }

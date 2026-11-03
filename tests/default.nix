@@ -3,17 +3,31 @@
   pkgs,
   impurifier,
   coreSrc,
+  bundled ? false,
 }:
 let
+  nativeProof = pkgs.pkgsStatic.stdenv.mkDerivation {
+    name = "native-static-proof";
+    dontUnpack = true;
+    buildPhase = ''
+      cat > proof.c <<'C'
+      #include <stdio.h>
+      int main(void) { puts("Hello from native payload"); return 0; }
+      C
+      $CC proof.c -o proof
+    '';
+    installPhase = "mkdir -p $out/bin; cp proof $out/bin/";
+  };
   upstream = import ../nix/upstream.nix { inherit pkgs; };
   rootfs = upstream + "/woof-code/rootfs-skeleton";
   pet =
     version:
-    impurifier.buildPet {
+    impurifier.makeNativePet {
       name = "pet-tool";
       inherit version;
       payload = pkgs.runCommand "pet-test-payload" { } ''
-        mkdir -p $out/usr/share/pet-test $out/etc
+        mkdir -p $out/usr/share/pet-test $out/etc $out/usr/libexec/native-pet
+        cp ${nativeProof}/bin/proof $out/usr/libexec/native-pet/proof
         echo ${version} > $out/usr/share/pet-test/version
         echo ${version} > $out/etc/pet-test.conf
       '';
@@ -93,7 +107,12 @@ in
       systemd.tmpfiles.rules = [
         "d /usr/bin 0755 root root -"
         "L+ /usr/bin/python3 - - - - ${pkgs.python3}/bin/python3"
-        "L+ /usr/bin/nix-store - - - - ${pkgs.nix}/bin/nix-store"
+        "L+ /usr/bin/nix-store - - - - ${
+          if bundled then
+            pkgs.writeShellScript "incompatible-nix-store" "echo incompatible; exit 1"
+          else
+            "${pkgs.nix}/bin/nix-store"
+        }"
         "L+ /usr/bin/nix - - - - ${pkgs.nix}/bin/nix"
       ];
       virtualisation.qemu.package = lib.mkForce pkgs.qemu;
@@ -132,12 +151,14 @@ in
       succeed("touch /var/packages/user-installed-packages /var/packages/DISTRO_PKGS_SPECS /tmp/petget_proc/install_quietly /tmp/petget_proc/remove_pets_quietly; echo true > /var/local/petget/nt_category")
       succeed("cp ${pet "1"}/pet-tool-1-1.pet /tmp/; bash /usr/local/petget/installpkg.sh /tmp/pet-tool-1-1.pet > /tmp/install.log 2>&1 || { cat /tmp/install.log; exit 1; }")
       succeed("cat /tmp/install.log; grep '^1$' /usr/share/pet-test/version; grep '^pet-tool-1-1|' /var/packages/user-installed-packages; grep installed /var/pet-install-marker")
+      succeed("mkdir -p /srv/native/usr/libexec/native-pet; cp /usr/libexec/native-pet/proof /srv/native/usr/libexec/native-pet/proof; chroot /srv/native /usr/libexec/native-pet/proof | grep Hello")
+      succeed("test ! -e /srv/native/nix && test ! -e /usr/sbin/petget-impurifier-activate")
       succeed("echo customized > /etc/pet-test.conf; cp ${pet "2"}/pet-tool-2-1.pet /tmp/; bash /usr/local/petget/installpkg.sh /tmp/pet-tool-2-1.pet > /tmp/upgrade.log 2>&1")
       succeed("grep '^2$' /usr/share/pet-test/version; grep '^2$' /etc/pet-test.conf; test $(wc -l < /var/packages/user-installed-packages) = 1")
       succeed("Xvfb :99 -screen 0 640x480x24 > /tmp/xvfb.log 2>&1 &")
       succeed("DISPLAY=:99 TREE2=pet-tool-2-1 bash /usr/local/petget/removepreview.sh > /tmp/remove.log 2>&1")
       machine.wait_until_succeeds("grep removed /var/pet-remove-marker")
-      succeed("test ! -e /usr/share/pet-test/version; test ! -e /etc/pet-test.conf; test ! -s /var/packages/user-installed-packages")
+      succeed("test ! -e /usr/share/pet-test/version; test ! -e /etc/pet-test.conf; test ! -s /var/packages/user-installed-packages; test ! -e /usr/libexec/native-pet/proof")
       def native_install(package):
           succeed(f"cp {package}/*.pet /tmp/; for p in /tmp/*.pet; do bash /usr/local/petget/installpkg.sh \"$p\" >> /tmp/native.log 2>&1 || {{ cat /tmp/native.log; exit 1; }}; done")
       native_install("${provider}")
